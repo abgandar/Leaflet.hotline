@@ -53,6 +53,7 @@
 		this._weight = 5;
 		this._outlineWidth = 1;
 		this._outlineColor = 'black';
+        this._gradient = true;
 
 		this._min = 0;
 		this._max = 1;
@@ -105,6 +106,15 @@
 		 */
 		outlineColor: function (outlineColor) {
 			this._outlineColor = outlineColor;
+			return this;
+		},
+
+		/**
+		 * Sets whether the hotline is drawn as a gradient (true) or using solid lines (false).
+		 * @param {bool} gradient - A boolean.
+		 */
+		gradient: function (gradient) {
+			this._gradient = gradient;
 			return this;
 		},
 
@@ -184,7 +194,10 @@
 			ctx.lineCap = 'round';
 
 			this._drawOutline(ctx);
-			this._drawHotline(ctx);
+			if( this._gradient )
+                this._drawHotlineGradient(ctx);
+            else
+                this._drawHotline(ctx);
 
 			return this;
 		},
@@ -213,29 +226,29 @@
 			var i, j, dataLength, path, pathLength, pointStart, pointEnd;
 
 			if (this._outlineWidth) {
+                ctx.lineWidth = this._weight + 2 * this._outlineWidth;
+                ctx.strokeStyle = this._outlineColor;
 				for (i = 0, dataLength = this._data.length; i < dataLength; i++) {
 					path = this._data[i];
-					ctx.lineWidth = this._weight + 2 * this._outlineWidth;
-
+                    if( path.length == 0 ) continue;
+                    pointStart = path[0];
+                    ctx.moveTo(pointStart.x, pointStart.y);
+                    ctx.beginPath();
 					for (j = 1, pathLength = path.length; j < pathLength; j++) {
 						pointStart = path[j - 1];
 						pointEnd = path[j];
-
-						ctx.strokeStyle = this._outlineColor;
-						ctx.beginPath();
-						ctx.moveTo(pointStart.x, pointStart.y);
 						ctx.lineTo(pointEnd.x, pointEnd.y);
-						ctx.stroke();
 					}
+                    ctx.stroke();
 				}
 			}
 		},
 
 		/**
-		 * Draws the color encoded hotline of the graphs.
+		 * Draws the color encoded hotline of the graphs using a gradient for each segment.
 		 * @private
 		 */
-		_drawHotline: function (ctx) {
+		_drawHotlineGradient: function (ctx) {
 			var i, j, dataLength, path, pathLength, pointStart, pointEnd,
 					gradient, gradientStartRGB, gradientEndRGB;
 
@@ -262,8 +275,40 @@
 					ctx.stroke();
 				}
 			}
+		},
+
+  		/**
+		 * Draws the color encoded hotline of the graphs using a solid (average) color for each segment.
+		 * @private
+		 */
+		_drawHotline: function (ctx) {
+			var i, j, dataLength, path, pathLength, pointStart, pointEnd,
+					StartRGB, EndRGB, RGB;
+
+			ctx.lineWidth = this._weight;
+
+			for (i = 0, dataLength = this._data.length; i < dataLength; i++) {
+				path = this._data[i];
+
+				for (j = 1, pathLength = path.length; j < pathLength; j++) {
+					pointStart = path[j - 1];
+					pointEnd = path[j];
+
+					StartRGB = this.getRGBForValue(pointStart.z);
+					EndRGB = this.getRGBForValue(pointEnd.z);
+                    RGB = [ 0.5*(StartRGB[0]+EndRGB[0]),
+                            0.5*(StartRGB[1]+EndRGB[1]),
+                            0.5*(StartRGB[2]+EndRGB[2]) ];
+
+					ctx.strokeStyle = 'rgb(' + RGB.join(',') + ')';
+					ctx.beginPath();
+					ctx.moveTo(pointStart.x, pointStart.y);
+					ctx.lineTo(pointEnd.x, pointEnd.y);
+					ctx.stroke();
+				}
+			}
 		}
-	};
+    };
 
 
 	var Renderer = L.Canvas.extend({
@@ -308,6 +353,9 @@
 			if (layer.options.outlineColor != null) {
 				this._hotline.outlineColor(layer.options.outlineColor);
 			}
+			if (layer.options.gradient != null) {
+				this._hotline.gradient(layer.options.gradient);
+			}
 			if (layer.options.palette) {
 				this._hotline.palette(layer.options.palette);
 			}
@@ -346,12 +394,10 @@
 					newCode = L.LineUtil._getBitCode(p, bounds);
 
 					if (codeOut === codeA) {
-						p.z = a.z;
-						a = p;
+						Object.assign(a, p);
 						codeA = newCode;
 					} else {
-						p.z = b.z;
-						b = p;
+                        Object.assign(b, p);
 						codeB = newCode;
 					}
 				}
@@ -377,12 +423,55 @@
 			},
 			weight: 5,
 			outlineColor: 'black',
-			outlineWidth: 1
+			outlineWidth: 1,
+            gradient: true,
+            attribute: function (x) { return x.z; },
 		},
 
 		getRGBForValue: function (value) {
 			return this._renderer._hotline.getRGBForValue(value);
 		},
+
+        closestLayerLatLng:  function(ll, f=false) {
+			var flat = this._latlngs[0] instanceof L.LatLng,
+                len = this._latlngs.length,
+                i, ring,
+                res = 0,
+                df = f ? function(p) { return Math.abs(ll.lat-p.lat)+Math.abs(ll.lng-p.lng); } : ll.distanceTo.bind( ll ),
+                d = Infinity;
+            if( flat )
+            {
+                for( var i = 0; i < len; i++ )
+                {
+                    var dist = df( this._latlngs[i] );
+                    if( dist < d )
+                    {
+                        res = i;
+                        d = dist;
+                    }
+                }
+                return [res, this._latlngs[res]];
+            }
+            else
+            {
+                var res_p;
+                for( var j = 0; j < len; j++ )
+                {
+                    var lenj = this._latlngs[j].length;
+                    for( var i = 0; i < lenj; i++ )
+                    {
+                        var dist = df( this._latlngs[j][i] );
+                        if( dist < d )
+                        {
+                            res = i;
+                            res_p = this._latlngs[j][i];
+                            d = dist;
+                        }
+                    }
+                }
+                return [res, res_p];
+            }
+        },
 
 		/**
 		 * Just like the Leaflet version, but with support for a z coordinate.
@@ -397,7 +486,7 @@
 				for (i = 0; i < len; i++) {
 					ring[i] = this._map.latLngToLayerPoint(latlngs[i]);
 					// Add the altitude of the latLng as the z coordinate to the point
-					ring[i].z = latlngs[i].alt;
+					ring[i].z = this.options.attribute(latlngs[i]);
 					projectedBounds.extend(ring[i]);
 				}
 				result.push(ring);
